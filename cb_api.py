@@ -112,7 +112,7 @@ class API:
             'Content-Type' : 'application/json'
         }
 
-    def request(self, endpoint, method = 'GET'):
+    def request(self, endpoint, method = 'GET', params = None):
         request_url = '{}/{}'.format(self._request_url, endpoint)
         api_headers = self.__request_headers()
 
@@ -124,7 +124,8 @@ class API:
             url = request_url,
             auth = self._auth,
             timeout = self._timeout,
-            headers = api_headers
+            headers = api_headers,
+            params = params
         ))
 
         if self._verbose:
@@ -134,4 +135,14 @@ class API:
 
     def batch(self, endpoints):
         return [self.request(e) for e in endpoints]
+
+    def candles(self, product, start, end, granularity):
+        params = {
+            'start' : start.isoformat(),
+            'end' : end.isoformat(),
+
+            'granularity': granularity
+        }
+
+        return self.request(Endpoint.CANDLES(product), params = params)
 
