@@ -7,3 +7,4 @@ It's meant to be a cryptocurrency pricing model for the BTC-ETH market on Coinba
 
 Although currently it basically just scrapes data into an SQLite database...
 
+If anyone wants to use this, open an issue or something to let me know!
