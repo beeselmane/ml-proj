@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+# This file implements a command line tool to download candle data from the Coinbase Pro API.
+# It's the only documentation I plan on making for itself, but it should be pretty self-explanatory,
+#   and the defaults it picks have been deemed by myself to be sane.
+# Note that you are expected to put a JSON file with your Coinbase Pro API keys somewhere and pass it
+#   with the argument --auth-file=<file>
+
 from data import Datapoint
 from data import Database
+
+from cmd import make_granularity
+from cmd import find_database
+from cmd import date_string
 
 import cb_api as api
 import data
@@ -20,12 +30,10 @@ import sys
 import os
 
 ################################################################################
-# Constants
+# Constants/Globals
 
-DEFAULT_DATABASE_FILE = 'coinbase.sqlite'
+# Default path to look for Coinbase Pro API keyfile
 DEFAULT_AUTH_FILE = 'coinbase.cred'
-
-DEFAULT_GRANULARITY = 300
 
 # Used to calculate fetch bucket size
 SEC_PER_DAY = 60 * 60 * 24
@@ -85,47 +93,6 @@ def parse_date_arg(args, prefix, format = '%d-%m-%Y'):
     except ValueError as error:
         print(f'Error: Unrecognized date string found for argument "{prefix[0:-1]}"!', file = sys.stderr)
         sys.exit(1)
-
-# Convienience function to print a date in the format I like.
-def date_string(date, format = '%d-%m-%Y'):
-    return date.strftime(format)
-
-def make_granularity(args, prefix = '--granularity='):
-    flags = [s for s in args if s.lower().startswith(prefix)]
-
-    if not flags:
-        print(f'Warning: No granularity specified. Will default to {DEFAULT_GRANULARITY} seconds...')
-
-        return DEFAULT_GRANULARITY
-
-    if len(flags) != 1:
-        print(f'Error: Ambiguous granularity!')
-        sys.exit(1)
-
-    try:
-        selected_granularity = int(flags[0][len(prefix):])
-    except ValueError as error:
-        print(f'Error: Unacceptable granularity!')
-        sys.exit(1)
-
-    if not selected_granularity in Database.ACCEPTABLE_INTERVALS:
-        print(f'Error: Unacceptable granularity!')
-        sys.exit(1)
-
-    return selected_granularity
-
-def find_database(args, prefix = '--db-loc='):
-    flags = [s for s in args if s.lower().startswith(prefix)]
-
-    if not flags:
-        print(f'Warning: No database specified. Will default to "{DEFAULT_DATABASE_FILE}"...')
-        return DEFAULT_DATABASE_FILE
-
-    if len(flags) != 1:
-        print(f'Error: Ambiguous or non-existent database file!')
-        sys.exit(1)
-
-    return flags[0][len(prefix):]
 
 ################################################################################
 # Core Logic
@@ -240,12 +207,12 @@ def do_clone(database, cbapi, start, end, granularity, targets):
 
                 # Note that the Coinbase API fetches data including the last requested time,
                 #   so we request until last_day - granularity
-                last_req_datetime = datetime(year = last_day.year, month = last_day.month, day = last_day.day) - timedelta(seconds = granularity)
+                last_req_datetime = last_day - timedelta(seconds = granularity)
 
                 # If we went past the end, clamp back to the proper end date.
                 if end < last_day:
-                    first_req_datetime = datetime(year = first_day.year, month = first_day.month, day = first_day.day)
-                    last_req_datetime = datetime(year = end.year, month = end.month, day = end.day) - timedelta(seconds = granularity)
+                    first_req_datetime = first_day
+                    last_req_datetime = end - timedelta(seconds = granularity)
                     last_day = end
 
                     # This is the last pass through the loop, we can update this here...
@@ -267,11 +234,8 @@ def do_clone(database, cbapi, start, end, granularity, targets):
                     # We skip this record if it fails to download
                     continue
 
-                # batch_insert expects a datetime here, not a date.
-                first_time = datetime(year = first_day.year, month = first_day.month, day = first_day.day, tzinfo = timezone.utc)
-
                 # Convienience functions to insert a new batch of data
-                batch_insert(dataset, candles, first_time, candles_per_batch)
+                batch_insert(dataset, candles, first_day, candles_per_batch)
 
                 # We can only make 10 requests per second.
                 # While technically we could do mulitple loops per second,
@@ -319,18 +283,37 @@ def do_clone(database, cbapi, start, end, granularity, targets):
                     candles = [list(chain.from_iterable(reversed(list(c.content() for c in l)))) for l in api_candles]
 
                     # Insert data one day at a time
-                    batch_insert(dataset, candles, first_day.replace(tzinfo = timezone.utc), candles_per_day)
+                    batch_insert(dataset, candles, first_day, candles_per_day)
 
                     # See above comment, we can only do 10 requests per second
                     time.sleep(1)
-
-                    #print([len(c) for c in candles])
-                    # Actually fetch the data from the API
-                    #api_candles = [cbapi.candles(*r) for r in request_params]
-                    ####
                 else:
                     # We need to do multiple fetches per day :/
-                    pass
+                    # I'm going to do this the dumb way...
+                    # I hope you have two hours...
+
+                    for i in range(batches_per_day):
+                        start_time = first_day + (i * batch_timedelta)
+
+                        # Same as above; don't want to clone the last candle twice.
+                        end_time = start_time + batch_timedelta - timedelta(seconds = granularity)
+
+                        # Do the fetch here
+                        api_candles = [cbapi.candles(p, start_time, end_time, granularity) for p in targets]
+                        candles = check_candles(api_candles)
+
+                        if not candles:
+                            print(' [failed]')
+                            print('Warning: Failed to fetch API data for one or more targets!', file = sys.stderr)
+
+                            # We skip this record if it fails to download
+                            continue
+
+                        # Just insert here, it's easier and probably not any slower
+                        batch_insert(dataset, candles, start_time, candles_per_batch)
+
+                        # Same as before
+                        time.sleep(1)
 
                 # Common '[done]' text here
                 print(f' [done]')
@@ -339,7 +322,7 @@ def do_clone(database, cbapi, start, end, granularity, targets):
     dataset = database.open_dataset(granularity)
 
     if not dataset:
-        print('Error: Failed to access dataset')
+        print('Error: Failed to access dataset', file = sys.stderr)
         sys.exit(1)
 
     # We don't need to clone data we already have in our dataset.
@@ -375,6 +358,8 @@ def do_clone(database, cbapi, start, end, granularity, targets):
     # Oh no I make a list I don't need here, 怎麼辦
     # Wow look I can put UTF-8 in my python source...
     [fetch_batch(dataset, *f) for f in fetch_jobs]
+
+    print(f'Info: Finished fetching requested data.', file = sys.stderr)
 
 ################################################################################
 # Main Function
@@ -421,7 +406,7 @@ def main():
         print(f'Warning: No end date specified! Ending on "{date_string(end_date)}"...', file = sys.stderr)
 
     if start_date >= end_date:
-        print(f'Error: End date can\'t be prior to start date!')
+        print(f'Error: End date can\'t be prior to start date!', file = sys.stderr)
         sys.exit(1)
 
     # Select a given candle granularity

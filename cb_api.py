@@ -15,6 +15,9 @@ import requests
 # For sys.stderr
 import sys
 
+################################################################################
+# Constants
+
 # General constants
 ENDPOINT = 'api.pro.coinbase.com'
 PROTOCOL = 'https'
@@ -25,6 +28,9 @@ class Endpoint:
     PROFILES = 'profiles'
     CANDLES = lambda p: 'products/{}/candles'.format(p)
     PRODUCT = lambda p: 'products/{}'.format(p)
+
+################################################################################
+# Convienience Classes
 
 # APIError class. This class represents various errors the API class may encounter.
 # Some of these are actually deprecated... (I actually think I only end up using one of them...)
@@ -97,6 +103,9 @@ class Auth(AuthBase):
         })
 
         return request
+
+################################################################################
+# Main Classes
 
 # API Class. This handles building and executing requests in the proper format.
 class API:

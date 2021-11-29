@@ -10,9 +10,15 @@ import pandas
 import numpy
 import sys
 
+################################################################################
+# Constants
+
 # We can maybe also include 'MUSD-EUR', but it doesn't seem to have as much history....
 # Should we change to ETH-EUR?
 API_PRODUCTS = ['ETH-BTC', 'BTC-USD', 'ETH-EUR']
+
+################################################################################
+# Convienience Classes
 
 # Database error!
 class DatabaseError(Exception):
@@ -45,6 +51,9 @@ class Datapoint(NamedTuple):
 
     # Do we have all the data points above?
     complete : bool
+
+################################################################################
+# Main Classes
 
 # Database class. This class represents the database where we store data for our model.
 # We wrap an sqlite connection and expose methods to get/set the data we want to expose

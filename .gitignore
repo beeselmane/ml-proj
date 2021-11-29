@@ -2,3 +2,4 @@ coinbase.*.sqlite.gz
 coinbase.sqlite
 coinbase.cred
 __pycache__/*
+.DS_Store
