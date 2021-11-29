@@ -1,5 +1,9 @@
+# -*- coding: utf-8 -*-
+
 from datetime import datetime
+from datetime import timezone
 from typing import NamedTuple
+from itertools import chain
 
 import sqlite3
 import pandas
@@ -10,11 +14,16 @@ import sys
 # Should we change to ETH-EUR?
 API_PRODUCTS = ['ETH-BTC', 'BTC-USD', 'ETH-EUR']
 
+# Database error!
+class DatabaseError(Exception):
+    def __str__(self):
+        return 'Database Inconsistency!'
+
 # META:
 # - interval
 class Datapoint(NamedTuple):
     # Tuple entry names
-    time : datetime
+    time : int
 
     eth_btc_min : float
     eth_btc_max : float
@@ -62,8 +71,8 @@ class Database:
             if len(table.fetchall()) == 0:
                 self._database._transact(f'''
                     CREATE TABLE {self._name} (
-                        time          REAL PRIMARY KEY,
-                        complete      REAL,
+                        time          INTEGER PRIMARY KEY,
+                        complete      INTEGER,
 
                         eth_btc_open  REAL,
                         eth_btc_close REAL,
@@ -91,7 +100,7 @@ class Database:
             # TODO: Check inserted types here.
 
             # TODO: Is there a better way to do this than all of these question marks?
-            self._database._batch_params(f'''INSERT INTO {self._name} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', points)
+            self._database._batch(f'''INSERT INTO {self._name} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', points)
 
         def insert_single(self, point):
             self.insert_rows([point])
@@ -119,6 +128,20 @@ class Database:
 
             return pandas.read_sql_query(query_string, self._database._connection, paramas = [self._name])
 
+        def current_range(self):
+            queries = [f'SELECT MIN(time) FROM {self._name}', f'SELECT MAX(time) FROM {self._name}']
+            rows = [r[0] for r in chain.from_iterable(self._database._transact(q).fetchall() for q in queries)]
+
+            # If we have max, we ought have min
+            if len(rows) > 2 or len(rows) == 1:
+                print(f'Error: Attempt to get current range for dataset \'{self._name}\' got {rows} rows!')
+                raise DatabaseError()
+
+            if None in rows:
+                return None
+
+            return [datetime.fromtimestamp(r, tz = timezone.utc) for r in rows]
+
     def __init__(self, db_path):
         self._path = db_path
 
@@ -144,18 +167,8 @@ class Database:
 
         return cursor
 
-    # Same as __transact, but with multiple commands
-    def _batch(self, commands):
-        cursor = self._connection.cursor()
-
-        [cursor.execute(c) for c in commands]
-
-        self._connection.commit()
-
-        return cursor
-
     # This method batches transactions with a shared command string and an iterable of parameters
-    def _batch_params(self, command, param_iterable):
+    def _batch(self, command, param_iterable):
         cursor = self._connection.cursor()
 
         cursor.executemany(command, param_iterable)

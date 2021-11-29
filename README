@@ -1,0 +1,9 @@
+Machine Learning Final Project
+======
+
+This is my machine learning final project. I figured I'd throw it up here because why not.
+
+It's meant to be a cryptocurrency pricing model for the BTC-ETH market on Coinbase.
+
+Although currently it basically just scrapes data into an SQLite database...
+

@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from enum import Enum
 
 # For signing requests
@@ -10,6 +12,9 @@ import time
 from requests.auth import AuthBase
 import requests
 
+# For sys.stderr
+import sys
+
 # General constants
 ENDPOINT = 'api.pro.coinbase.com'
 PROTOCOL = 'https'
@@ -21,7 +26,8 @@ class Endpoint:
     CANDLES = lambda p: 'products/{}/candles'.format(p)
     PRODUCT = lambda p: 'products/{}'.format(p)
 
-# APIError class. This class represents various errors the API class may encounter
+# APIError class. This class represents various errors the API class may encounter.
+# Some of these are actually deprecated... (I actually think I only end up using one of them...)
 class APIError(Exception):
     Underlying = 0
     Authentication = 1
@@ -103,10 +109,10 @@ class API:
         self._timeout = timeout
 
         if self._verbose:
-            print(f'API Endpoint: {endpoint}')
-            print(f'API Protocol: {protocol}')
+            print(f'API Endpoint: {endpoint}', file = sys.stderr)
+            print(f'API Protocol: {protocol}', file = sys.stderr)
 
-            print(f'API URL: {self._request_url}')
+            print(f'API URL: {self._request_url}', file = sys.stderr)
 
         if validate and not self.__validate_credentials():
             raise APIError(cause = APIError.Authentication)
@@ -125,7 +131,10 @@ class API:
         api_headers = self.__request_headers()
 
         if self._verbose:
-            print(f'{method.upper()}: {request_url}')
+            print(f'{method.upper()}: {request_url}', file = sys.stderr)
+
+            if params:
+                print(f'{method.upper()}: params={params}', file = sys.stderr)
 
         response = APIResponse(self._session.request(
             method = method,
@@ -137,10 +146,11 @@ class API:
         ))
 
         if self._verbose:
-            print(f'{method.upper()}: Status: {response.status()}')
+            print(f'{method.upper()}: Status: {response.status()}', file = sys.stderr)
 
         return response
 
+    # This could probably be optimized, but oh well...
     def batch(self, endpoints):
         return [self.request(e) for e in endpoints]
 

@@ -1,3 +1,4 @@
+coinbase.*.sqlite.gz
 coinbase.sqlite
 coinbase.cred
 __pycache__/*
