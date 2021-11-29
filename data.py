@@ -16,82 +16,85 @@ class Datapoint(NamedTuple):
     # Tuple entry names
     time : datetime
 
-    eth_btc_open : int
-    eth_btc_close : int
-    eth_btc_max : int
-    eth_btc_min : int
+    eth_btc_min : float
+    eth_btc_max : float
+    eth_btc_open : float
+    eth_btc_close : float
     eth_btc_vol : float
 
-    btc_usd_open : int
-    btc_usd_close : int
-    btc_usd_max : int
-    btc_usd_min : int
+    btc_usd_min : float
+    btc_usd_max : float
+    btc_usd_open : float
+    btc_usd_close : float
     btc_usd_vol : float
 
-    eth_eur_open : int
-    eth_eur_close : int
-    eth_eur_max : int
-    eth_eur_min : int
+    eth_eur_min : float
+    eth_eur_max : float
+    eth_eur_open : float
+    eth_eur_close : float
     eth_eur_vol : float
 
     # Do we have all the data points above?
     complete : bool
 
-# Dataset class. This class represents the specific dataset we use for storing trade data.
+# Database class. This class represents the database where we store data for our model.
 # We wrap an sqlite connection and expose methods to get/set the data we want to expose
 # Note: This class is not secure, and I can think of at least one possible injection attack.
 #   Don't use it for anything more than it is.
-class Dataset:
+class Database:
     # These are the valid time intervals supported by the Coinbase Pro API
     ACCEPTABLE_INTERVALS = [60, 300, 900, 3600, 21600, 86400]
 
-    # Dataset.Table represents a given table in the dataset.
+    # Database.Dataset represents a given dataset table.
     # Each table for a given time interval is unique.
-    class Table:
-        def __init__(self, dataset, interval):
+    class Dataset:
+        def __init__(self, database, interval):
+            self._database = database
             self._interval = interval
-            self._dataset = dataset
 
             # Who are we?
             self._name = f'candles_{self._interval}s'
 
             # We check if the table exists here. See sqlite3 documentation for method
-            table = self._dataset.__transact("SELECT name FROM sqlite_master WHERE type = 'table' AND name = '?'", self._name)
+            table = self._database._transact('SELECT name FROM sqlite_master WHERE type = \'table\' AND name = ?', self._name)
 
             # Need to create table if this happens
-            if len(table.fetchall()) is 0:
-                self._dataset.__transact('''
-                    CREATE TABLE ? (
-                        time          INTEGER PRIMARY KEY,
-                        complete      INTEGER,
+            if len(table.fetchall()) == 0:
+                self._database._transact(f'''
+                    CREATE TABLE {self._name} (
+                        time          REAL PRIMARY KEY,
+                        complete      REAL,
 
-                        eth_btc_open  INTEGER,
-                        eth_btc_close INTEGER,
-                        eth_btc_max   INTEGER,
-                        eth_btc_min   INTEGER,
+                        eth_btc_open  REAL,
+                        eth_btc_close REAL,
+                        eth_btc_max   REAL,
+                        eth_btc_min   REAL,
                         eth_btc_vol   REAL,
 
-                        btc_usd_open  INTEGER,
-                        btc_usd_close INTEGER,
-                        btc_usd_max   INTEGER,
-                        btc_usd_min   INTEGER,
+                        btc_usd_open  REAL,
+                        btc_usd_close REAL,
+                        btc_usd_max   REAL,
+                        btc_usd_min   REAL,
                         btc_usd_vol   REAL,
 
-                        eth_eur_open  INTEGER,
-                        eth_eur_close INTEGER,
-                        eth_eur_max   INTEGER,
-                        eth_eur_min   INTEGER,
+                        eth_eur_open  REAL,
+                        eth_eur_close REAL,
+                        eth_eur_max   REAL,
+                        eth_eur_min   REAL,
                         eth_eur_vol   REAL
                     )
-                ''', self._name)
+                ''')
+
+            print(f'Info: Opened table "{self._name}"', file = sys.stderr)
 
         def insert_rows(self, points):
-            # TODO: Check type
+            # TODO: Check inserted types here.
 
-            '''INSERT INTO ? (?)'''
+            # TODO: Is there a better way to do this than all of these question marks?
+            self._database._batch_params(f'''INSERT INTO {self._name} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', points)
 
         def insert_single(self, point):
-            self.insert_rows(point)
+            self.insert_rows([point])
 
         def select_range(self, earliest, latest, only_complete_records = True):
             query_string = 'SELECT * FROM ? WHERE time BETWEEN ? AND ?'
@@ -99,13 +102,13 @@ class Dataset:
             if only_complete_records:
                 query_string += ' WHERE complete = 1'
 
-            params = [self._name, int(earliest.timestamp()), int(latest.timestamp())
+            params = [self._name, int(earliest.timestamp()), int(latest.timestamp())]
 
-            dataframe = pandas.read_sql_query(query_string, self._dataset._connection, params = params)
+            dataframe = pandas.read_sql_query(query_string, self._database._connection, params = params)
 
             if only_complete_records:
                 return dataframe.drop('complete', 1)
-            else
+            else:
                 return dataframe
 
         def select_all(self, only_complete_records = True):
@@ -114,7 +117,7 @@ class Dataset:
             if only_complete_records:
                 query_string += ' WHERE complete = 1'
 
-            return pandas.read_sql_query(query_string, self._dataset._connection, paramas = [self._name])
+            return pandas.read_sql_query(query_string, self._database._connection, paramas = [self._name])
 
     def __init__(self, db_path):
         self._path = db_path
@@ -125,11 +128,14 @@ class Dataset:
         # This line will throw an exception if sqlite3.connect() fails above.
         self._connection.cursor().close()
 
-    def __exit(self, exc_type, exc_value, traceback):
+        # We need to pass ourself back out here
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
         self._connection.close()
 
     # This method handles committing automatically
-    def __transact(self, commands, *params):
+    def _transact(self, command, *params):
         cursor = self._connection.cursor()
 
         cursor.execute(command, params)
@@ -139,7 +145,7 @@ class Dataset:
         return cursor
 
     # Same as __transact, but with multiple commands
-    def __batch(self, commands):
+    def _batch(self, commands):
         cursor = self._connection.cursor()
 
         [cursor.execute(c) for c in commands]
@@ -148,12 +154,23 @@ class Dataset:
 
         return cursor
 
-    def open_table(self, interval):
-        if interval is not int:
-            print(f'Interval must be an integer! (found {type(interval})', file = sys.stderr)
+    # This method batches transactions with a shared command string and an iterable of parameters
+    def _batch_params(self, command, param_iterable):
+        cursor = self._connection.cursor()
 
-        if interval not in Dataset.ACCEPTABLE_INTERVALS:
-            print(f'Interval "{interval}" is not acceptable!', file = sys.stderr)
+        cursor.executemany(command, param_iterable)
 
-        return Table(self, interval)
+        self._connection.commit()
 
+        return cursor
+
+    def open_dataset(self, interval):
+        if not isinstance(interval, int):
+            print(f'Error: Interval must be an integer! (found {type(interval)})', file = sys.stderr)
+            return None
+
+        if interval not in Database.ACCEPTABLE_INTERVALS:
+            print(f'Error: Interval "{interval}" is not acceptable!', file = sys.stderr)
+            return None
+
+        return Database.Dataset(self, interval)

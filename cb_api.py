@@ -31,6 +31,14 @@ class APIError(Exception):
     def __init__(self, cause = Underlying):
         self._cause = cause
 
+    def __str__(self):
+        return {
+            APIError.Underlying : 'Underlying',
+            APIError.Authentication : 'Authentication',
+            APIError.Request : 'Request',
+            APIError.UnknownMethod: 'UnknownMethod'
+        }[self._cause]
+
 # APIResponse Class. This class encapsulates the response from an API request
 # Objects of this type are returned by methods in the API class
 class APIResponse:
@@ -50,7 +58,7 @@ class APIResponse:
         return (200 <= self._underlying.status_code) and (self._underlying.status_code < 300)
 
 # Auth Class. This handles authentication by API key.
-# Authenticaion must be done for many API calls.
+# Authentication must be done for many API calls.
 # We extent AuthBase and implement __call__ to be allowed to be passed directly
 #   as the `auth` argument of request() calls.
 class Auth(AuthBase):
@@ -145,4 +153,3 @@ class API:
         }
 
         return self.request(Endpoint.CANDLES(product), params = params)
-
