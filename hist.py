@@ -11,6 +11,7 @@ from data import Datapoint
 from data import Database
 
 from cmd import make_granularity
+from cmd import parse_date_arg
 from cmd import find_database
 from cmd import date_string
 
@@ -77,22 +78,6 @@ def make_auth(args, prefix = '--auth-file='):
         creds = json.load(file)
 
         return api.Auth(creds['key'], creds['passphrase'], creds['secret'])
-
-def parse_date_arg(args, prefix, format = '%d-%m-%Y'):
-    flags = [s for s in args if s.lower().startswith(prefix)]
-
-    if not flags:
-        return None
-
-    if len(flags) != 1:
-        print(f'Error: Ambiguous date found for argument "{prefix[0:-1]}"!', file = sys.stderr)
-        sys.exit(1)
-
-    try:
-        return datetime.strptime(flags[0][len(prefix):], format).replace(tzinfo = timezone.utc).replace(hour = 0, minute = 0, second = 0)
-    except ValueError as error:
-        print(f'Error: Unrecognized date string found for argument "{prefix[0:-1]}"!', file = sys.stderr)
-        sys.exit(1)
 
 ################################################################################
 # Core Logic
@@ -174,7 +159,7 @@ def do_clone(database, cbapi, start, end, granularity, targets):
                     complete = False
 
             # Build the next batch to insert
-            new_batch += [Datapoint(unixtime, *datapoint_list, complete)]
+            new_batch += [Datapoint(unixtime, complete, *datapoint_list)]
 
         # We should use all the data we have available...
         if sum(indicies) != -len(candles):
@@ -309,6 +294,8 @@ def do_clone(database, cbapi, start, end, granularity, targets):
                             # We skip this record if it fails to download
                             continue
 
+                        # TODO: Actually, this might be an issue if we attempt to resume through a day?
+                        #   Review the range comparison code and make sure this is okay...
                         # Just insert here, it's easier and probably not any slower
                         batch_insert(dataset, candles, start_time, candles_per_batch)
 
@@ -319,7 +306,7 @@ def do_clone(database, cbapi, start, end, granularity, targets):
                 print(f' [done]')
 
     # We open the dataset here. Dataset objects don't need to be closed.
-    dataset = database.open_dataset(granularity)
+    dataset = database.open_dataset(granularity, Database.Dataset.VARIANT_RAW)
 
     if not dataset:
         print('Error: Failed to access dataset', file = sys.stderr)
@@ -416,7 +403,7 @@ def main():
     targets = data.API_PRODUCTS
 
     # Parse database file to use and open database
-    with Database(find_database(sys.argv)) as database:
+    with Database(find_database(sys.argv), verbose = v) as database:
         try:
             cbapi = api.API(auth, verbose = v)
 

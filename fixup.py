@@ -10,9 +10,16 @@
 # *_open  = *_max = prior.*_close
 #
 # This modification maintains the sanity of entries assigned 0's by the database
-#   by interpolation, but keeps volume 0 (and complete = 0)
+#   by interpolation, but keeps volume 0 (or whatever it was before fixup, the API is quite weird sometimes...)
+
+# As a helpful tip, all of these commands can be run as such to apply to all granularities:
+# t=(60 300 900 3600 21600 86400) printf '%s\n' "${t[@]}" | xargs -I {} ./fixup.py --db-loc=coinbase.sqlite --granularity={} ...
 
 from data import Database
+
+from cmd import open_dataset_or_exit
+from cmd import make_granularity
+from cmd import find_database
 
 # For 'API_PRODUCTS'
 import data
@@ -29,13 +36,107 @@ import sys
 v = False
 
 ################################################################################
+# Core Logic
+
+# These are currently unimplemented, I didn't get any data that needed these methods...
+def fixup_head(dataframe):
+    return dataframe
+
+def fixup_tail(dataframe):
+    return dataframe
+
+def do_fixups(database, granularity, do_verify, do_standardize, force):
+    fixup_database = open_dataset_or_exit(database, granularity, Database.Dataset.VARIANT_PATCHED)
+    dataset = open_dataset_or_exit(database, granularity, Database.Dataset.VARIANT_RAW)
+
+    if fixup_database.current_range():
+        if force:
+            print('Warning: Fixed up dataset already exists. Will overwrite.', file = sys.stderr)
+
+            fixup_database.clear()
+        else:
+            print('Error: Fixed up dataset already exists.', file = sys.stderr)
+            print('Error: Refusing to overwrite...')
+
+            sys.exit(1)
+
+    if do_verify and not dataset.verify():
+        print('Warning: Failed to verify the table for the requested granularity!', file = sys.stderr)
+        print('Error: This is bad. You probably have to clone the data again...', file = sys.stderr)
+        print('Note: I\'m not even going to try to fixup this database, bye.', file = sys.stderr)
+
+        sys.exit(1)
+
+    print('Info: Dataset verification passed.', file = sys.stderr)
+
+    dataframe = dataset.select_all(only_complete_records = False)
+
+    if dataframe.empty:
+        print('Warning: This table appears to be empty!', file = sys.stderr)
+        print('Note: Exiting here with successful exit code.', file = sys.stderr)
+
+        sys.exit(0)
+
+    if len(dataframe[dataframe['complete'] == False]) == 0:
+        print('Info: No fixups appear to be necessary for this database.', file = sys.stdout)
+        print('Info: Simply copying to the destination and exiting...', file = sys.stdout)
+
+        fixup_database.save(dataframe)
+
+        sys.exit(0)
+
+    print(f'Info: Begin fixups for {len(dataframe[dataframe["complete"] == False])} rows...', file = sys.stderr)
+
+    # We fix the head and tail of our dataframe first.
+    # These require a special case, since we can't look
+    #   directly at both sides of the data point temporily.
+    if not dataframe.iloc[0].complete:
+        dataframe = fixup_head(dataframe)
+
+    if not dataframe.iloc[-1].complete:
+        dataframe = fixup_tail(dataframe)
+
+    print('Saving fixed up dataset...', end = '')
+
+    fixup_database.save(dataframe)
+
+    print(' Done')
+
+################################################################################
 # Main Function
 
 def main():
     # I only want to access this here.
     globals()['v'] = '-v' in sys.argv
 
-    sys.exit(0)
+    # Select a given candle granularity
+    granularity = make_granularity(sys.argv)
+
+    # Find database
+    database_path = find_database(sys.argv)
+
+    # Parse database file to use and open database
+    with Database(database_path, verbose = v) as database:
+        if '--show-info' in sys.argv:
+            dataset = open_dataset_or_exit(database, granularity, Database.Dataset.VARIANT_RAW)
+
+            __range = dataset.current_range()
+
+            # We just dump table info and exit
+            print(f'Info for dataset with granularity={granularity} in database \'{database_path}\':')
+            print(f'Total entries: {len(dataset)}')
+            print(f'Incomplete entries: {dataset.count_incomplete()}')
+
+            if __range:
+                print(f'Earliest record at: {__range[0].isoformat()}')
+                print(f'Latest record at: {__range[1].isoformat()}')
+            else:
+                print('Missing range data.')
+
+            pass
+        else:
+            # We perform fixups (note that this is NOT in place)
+            do_fixups(database, granularity, not ('--no-verify' in sys.argv), ('--force' in sys.argv))
 
 if __name__ == "__main__":
     main()

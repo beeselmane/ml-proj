@@ -4,6 +4,11 @@
 
 from data import Database
 
+from datetime import datetime
+from datetime import timezone
+
+import sys
+
 ################################################################################
 # Constants
 
@@ -15,6 +20,22 @@ DEFAULT_GRANULARITY = 300
 
 ################################################################################
 # Argument Processing
+
+def parse_date_arg(args, prefix, format = '%d-%m-%Y'):
+    flags = [s for s in args if s.lower().startswith(prefix)]
+
+    if not flags:
+        return None
+
+    if len(flags) != 1:
+        print(f'Error: Ambiguous date found for argument "{prefix[0:-1]}"!', file = sys.stderr)
+        sys.exit(1)
+
+    try:
+        return datetime.strptime(flags[0][len(prefix):], format).replace(tzinfo = timezone.utc).replace(hour = 0, minute = 0, second = 0)
+    except ValueError as error:
+        print(f'Error: Unrecognized date string found for argument "{prefix[0:-1]}"!', file = sys.stderr)
+        sys.exit(1)
 
 def make_granularity(args, prefix = '--granularity='):
     flags = [s for s in args if s.lower().startswith(prefix)]
@@ -56,3 +77,14 @@ def find_database(args, prefix = '--db-loc='):
 # Convienience function to print a date in the format I like.
 def date_string(date, format = '%d-%m-%Y'):
     return date.strftime(format)
+
+# Open a dataset of a provided granularity and variant or exit
+def open_dataset_or_exit(database, granularity, variant):
+    # We open the dataset here. Dataset objects don't need to be closed.
+    dataset = database.open_dataset(granularity, variant)
+
+    if dataset == None:
+        print(f'Error: Failed to access dataset (granularity = {granularity}, variant = {variant})', file = sys.stderr)
+        sys.exit(1)
+
+    return dataset
