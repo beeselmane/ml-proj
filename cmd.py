@@ -21,6 +21,35 @@ DEFAULT_GRANULARITY = 300
 ################################################################################
 # Argument Processing
 
+def read_string_option(args, prefix, opts, default = None, lowercase = True):
+    flags = [s for s in args if s.lower().startswith(prefix)]
+
+    if not flags:
+        print(f'Warning: No \'{prefix[0:-1]}\' option specified!', file = sys.stderr)
+
+        if default == None:
+            print(f'Error: Can\'t figure out default option!', file = sys.stderr)
+
+            sys.exit(1)
+        else:
+            return default;
+
+    if len(flags) != 1:
+        print(f'Error: Ambiguous \'{prefix[0:-1]}\' option!', file = sys.stderr)
+        sys.exit(1)
+
+    perspective = flags[0][len(prefix):]
+
+    if lowercase:
+        perspective = perspective.lower()
+
+    if opts != None and perspective not in opts:
+        print(f'Error: Unrecognized selection for option \'{perspective}\'!!', file = sys.stderr)
+
+        sys.exit(1)
+    else:
+        return perspective
+
 def parse_date_arg(args, prefix, format = '%d-%m-%Y'):
     flags = [s for s in args if s.lower().startswith(prefix)]
 

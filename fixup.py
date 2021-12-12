@@ -28,6 +28,7 @@ from datetime import timedelta
 from datetime import datetime
 from datetime import timezone
 
+import pickle
 import sys
 
 ################################################################################
@@ -45,7 +46,7 @@ def fixup_head(dataframe):
 def fixup_tail(dataframe):
     return dataframe
 
-def do_fixups(database, granularity, do_verify, do_standardize, force):
+def do_fixups(database, granularity, do_verify, force):
     fixup_database = open_dataset_or_exit(database, granularity, Database.Dataset.VARIANT_PATCHED)
     dataset = open_dataset_or_exit(database, granularity, Database.Dataset.VARIANT_RAW)
 
@@ -96,9 +97,52 @@ def do_fixups(database, granularity, do_verify, do_standardize, force):
     if not dataframe.iloc[-1].complete:
         dataframe = fixup_tail(dataframe)
 
+    rows_to_fix = dataframe.index[dataframe['complete'] == False]
+
+    for i in rows_to_fix:
+        time = dataframe.loc[i]['time']
+        dataframe.loc[i] = dataframe.loc[i - 1]
+        dataframe.loc[i, 'time'] = time
+
     print('Saving fixed up dataset...', end = '')
 
     fixup_database.save(dataframe)
+
+    print(' Done')
+
+def fixup_norm(database, granularity):
+    norm_database = open_dataset_or_exit(database, granularity, Database.Dataset.VARIANT_NORM)
+    dataset = open_dataset_or_exit(database, granularity, Database.Dataset.VARIANT_PATCHED)
+
+    if norm_database.current_range():
+        norm_database.clear()
+
+    dataframe = dataset.select_all()
+
+    # We modify here
+    m_dataframe = dataframe[dataframe.columns[1:]]
+
+    mean = m_dataframe.mean(axis = 0)
+    deviation = m_dataframe.std(axis = 0)
+
+    result = (m_dataframe.sub(mean, axis = 1)).div(deviation, axis = 1)
+
+    # Save this without any modification
+    result.insert(loc = 0, column = 'time', value = dataframe['time'])
+
+    print('Saving normalized dataset...', end = '')
+
+    norm_database.save(result)
+
+    print(' Done')
+
+    print('Saving metadata...', end = '')
+
+    with open(f'md/candles_{granularity}s.pyc', 'wb') as fp:
+        pickle.dump({
+            'deviation' : deviation,
+            'mean' : mean
+        }, fp)
 
     print(' Done')
 
@@ -136,7 +180,10 @@ def main():
             pass
         else:
             # We perform fixups (note that this is NOT in place)
-            do_fixups(database, granularity, not ('--no-verify' in sys.argv), ('--force' in sys.argv))
+            if not ('--skip-base' in sys.argv):
+                do_fixups(database, granularity, not ('--no-verify' in sys.argv), ('--force' in sys.argv))
+
+            fixup_norm(database, granularity)
 
 if __name__ == "__main__":
     main()

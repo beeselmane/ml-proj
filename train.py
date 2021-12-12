@@ -14,13 +14,12 @@
 from data import DATA_DIMENSION
 from data import Database
 
+# Note that these should really just be in a list in the model module...
+from model import MODEL_CLASSES
 from model import AverageModel
-from model import Model01
-from model import Model02
-from model import Model03
-from model import Model04
 
 from cmd import open_dataset_or_exit
+from cmd import read_string_option
 from cmd import make_granularity
 from cmd import parse_date_arg
 from cmd import find_database
@@ -194,6 +193,7 @@ def sigint_handler(sig, frame):
             print('')
             print(f'Last validation loss: {g_state.validation_loss[g_state.next_checkpoint.isoformat()][-1]}')
             print(f'Last train loss: {g_state.train_loss[g_state.next_checkpoint.isoformat()][-1]}')
+            print(f'Best validation loss: {g_state.validation_best}')
             print('')
 
         # Don't divide by 0
@@ -211,32 +211,6 @@ def sigint_handler(sig, frame):
 
 ################################################################################
 # Argument processing
-
-def read_string_option(args, prefix, opts, default = None):
-    flags = [s for s in args if s.lower().startswith(prefix)]
-
-    if not flags:
-        print(f'Warning: No \'{prefix[0:-1]}\' option specified!', file = sys.stderr)
-
-        if default == None:
-            print(f'Error: Can\'t figure out default option!', file = sys.stderr)
-
-            sys.exit(1)
-        else:
-            return default;
-
-    if len(flags) != 1:
-        print(f'Error: Ambiguous \'{prefix[0:-1]}\' option!', file = sys.stderr)
-        sys.exit(1)
-
-    perspective = flags[0][len(prefix):].lower()
-
-    if opts != None and perspective not in opts:
-        print(f'Error: Unrecognized selection for option \'{perspective}\'!!', file = sys.stderr)
-
-        sys.exit(1)
-    else:
-        return perspective
 
 def read_numeric_option(args, prefix):
     flags = [s for s in args if s.lower().startswith(prefix)]
@@ -300,7 +274,8 @@ def do_save_all(user_info):
         'train_loss'        : g_state.train_loss,
         'model_current'     : g_state.model.state_dict(),
         'model_best'        : g_state.model_best.state_dict(),
-        'optimizer'         : g_state.model.optimizer.state_dict()
+        'optimizer'         : g_state.model.optimizer.state_dict(),
+        'meta_path'         : g_state.meta_path
     }, save_path)
 
     print('Info: Saved training progress.', file = sys.stderr)
@@ -371,12 +346,13 @@ def do_train():
     train_samples = g_state.train_set[0].size()[0]
     batch_count = train_samples / g_state.batch_size
 
-    # We need to initialize these here
-    g_state.validation_loss = {}
-    g_state.train_loss = {}
+    if not hasattr(g_state, 'validation_loss'):
+        # We need to initialize these here
+        g_state.validation_loss = {}
+        g_state.train_loss = {}
 
-    g_state.model_best = copy.deepcopy(g_state.model)
-    g_state.validation_best = sys.maxsize # This is a very large number..
+        g_state.model_best = copy.deepcopy(g_state.model)
+        g_state.validation_best = sys.maxsize # This is a very large number..
 
     while g_state.keep_training:
         g_state.next_checkpoint = datetime.now() + CHECKPOINT_DELTA
@@ -486,9 +462,35 @@ def make_splits(dataset):
         # Random. Just randomly split everything.
         # Actually, I don't have a way of tracking this...
         # We can only support fixed splits for now...
-        print('Error: Random splits are currently unsupported!', file = sys.stderr)
 
-        sys.exit(1)
+        if not hasattr(g_state, 'permutation'):
+            g_state.train_split = 0.7
+            g_state.validation_split = 0.2
+            g_state.test_split = 0.1
+
+        raw_set = dataset.select_all()
+
+        if raw_set.empty:
+            print('Error: No data to use!', file = sys.stderr)
+            sys.exit(1)
+
+        # Grab everything
+        whole_set = unwrap(fixup(raw_set), g_state.sequence_length)
+        sample_count = whole_set[0].size()[0]
+
+        train_length = int((sample_count * g_state.train_split) / g_state.batch_size) * g_state.batch_size
+        validation_length = int((sample_count * g_state.validation_split) / g_state.batch_size) * g_state.batch_size
+
+        if not hasattr(g_state, 'permutation'):
+            g_state.permutation = torch.randperm(sample_count)
+
+        g_state.train_set = [t[g_state.permutation[0:train_length]] for t in whole_set]
+        g_state.validation_set = [t[g_state.permutation[train_length:train_length + validation_length]] for t in whole_set]
+        g_state.test_set = [t[g_state.permutation[train_length + validation_length:]] for t in whole_set]
+
+        print(f'Info: Train set length: {g_state.train_set[0].size()[0]}', file = sys.stderr)
+        print(f'Info: Validation set length: {g_state.validation_set[0].size()[0]}', file = sys.stderr)
+        print(f'Info: Test set length: {g_state.test_set[0].size()[0]}', file = sys.stderr)
     else:
         g_state.train_set = process(g_state.train_range)
 
@@ -557,12 +559,7 @@ def main():
         g_state.model_subtype = read_numeric_option(sys.argv, '--model=')
 
         try:
-            model_class = [None,
-                Model01,
-                Model02,
-                Model03,
-                Model04
-            ][g_state.model_subtype]
+            model_class = MODEL_CLASSES[g_state.model_subtype]
         except IndexError as error:
             print(f'Error: Unrecognized model subtype \'{model_subtype}\'!', file = sys.stderr)
             sys.exit(1)
@@ -573,17 +570,19 @@ def main():
     else:
         # This is a special case we need to handle later...
         # This is a non-parametreic model we use as a baseline.
-        g_state.model = AverageModel()
+        pass
 
     # Make sure our data directory exists.
-    g_state.data_dir = os.path.normpath(read_string_option(sys.argv, '--model-dir=', None, 'model'))
+    g_state.data_dir = os.path.normpath(read_string_option(sys.argv, '--model-dir=', None, 'model', lowercase = False))
 
     # This function ensures our data directory exists, and creates it if not.
     check_dir(g_state.data_dir)
 
     # Start doing real work
     with Database(g_state.database_path) as database:
-        dataset = open_dataset_or_exit(database, g_state.granularity, Database.Dataset.VARIANT_PATCHED)
+        variant = Database.Dataset.VARIANT_NORM if g_state.model.use_normed_data else Database.Dataset.VARIANT_PATCHED
+
+        dataset = open_dataset_or_exit(database, g_state.granularity, variant)
 
         # First, we need to make our splits.
         make_splits(dataset)

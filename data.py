@@ -70,6 +70,7 @@ class Database:
     class Dataset:
         # Acceptable dataset variants.
         VARIANT_PATCHED = '_patched'
+        VARIANT_NORM = '_norm'
         VARIANT_RAW = ''
 
         def __init__(self, database, interval, variant):
